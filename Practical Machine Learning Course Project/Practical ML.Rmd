@@ -1,0 +1,149 @@
+---
+title: "Practical Machine Learning Project"
+author: "Tanmay Bhatt"
+date: "6/2/2022"
+output: html_document
+---
+
+## Introduction
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, data from *accelerometers on the belt, forearm, arm, and dumbbell* of 6 participants are used to *predict the manner* in which they perform unilateral dumbbell biceps curls. The 5 possible methods are:
+
+A: exactly according to the specification
+B: throwing the elbows to the front
+C: lifting the dumbbell only halfway
+D: lowering the dumbbell only halfway
+E: throwing the hips to the front
+
+## Setup, load packages and data 
+The library packages required and datasets were first loaded as below:
+```{r Setup, cache=T, results=F}
+knitr::opts_chunk$set(warning=F)
+set.seed(77)
+library(corrplot)
+library(rattle)
+library(randomForest)
+library(caret)
+library(rpart.plot)
+train_val <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+```
+
+### Examine Data
+The data structure were then examined:
+```{r Examine data, cache=T, results=F}
+names(train_val)
+names(test)
+# str(train_val)
+# str(test)
+```
+
+### Handle Missing Data
+It was found that the variables have either none missing entries or are mostly unfilled.
+```{r Missing data in variables, cache=T}
+apply(X=train_val, MARGIN=2, FUN=function(x) {sum(is.na(x))})
+```
+
+The variables with mostly missing values in the test set were first dropped:
+```{r Drop mostly empty variables, cache=T}
+train_val <- train_val[, colSums(is.na(test)) == 0]
+test <- test[, colSums(is.na(test)) == 0] 
+```
+
+### Preprocess Data
+The cleaning was followed by variables that have very few unique values relative to the number of sample:
+```{r Drop near zero variance variables, cache=T}
+nzv_vars <- nearZeroVar(train_val)
+train_val <- train_val[, -nzv_vars]
+test <- test[, -nzv_vars]
+```
+
+And also variables that only serve for identification purposes:
+```{r Drop identification variables, cache=T}
+train_val <- train_val[, -(1:5)]
+test <- test[, -(1:5)]
+```
+
+The data type of the variable to be predicted was converted into a categorical variable:
+```{r Convert data type, cache=T}
+class(train_val$classe)
+train_val$classe <- factor(train_val$classe)
+```
+
+### Create Training and Validation Datasets
+The cleaned train dataset was split into datasets for training (70%) and validation (30%).
+```{r Train-validation split, cache=T}
+train_id <- createDataPartition(y=train_val$classe, p=0.70, list=F)
+train <- train_val[train_id, ]
+validation <- train_val[-train_id, ]
+```
+
+### Correlation Analysis
+The correlations between all variables except response variable in the train set were then visualized:
+```{r Correlation analysis, fig.height=7, fig.width=7, cache=T}
+corr_mat <- cor(train[, -ncol(train)])
+corrplot(corr=corr_mat, method="color", type="lower", order="FPC", tl.cex=0.5, tl.col=rgb(0, 0, 0))
+```
+
+And the variables with correlations higher than 0.8 were listed as below:
+```{r Highly-correlated variables, cache=T}
+findCorrelation(x=corr_mat, cutoff=0.8, names=T)
+```
+
+## Models Training
+A **Random Forest** and a **Generalized Boosted Model** were chosen for the activity recognition prediction due to their robustness to correlated covariates and outliers. Besides, the feature selection could also be taken care of automatically. The model that achieves better accuracy using **5-fold cross validation** will be used to predict the test set `classe`. The results were visualized using a confusion matrix.
+
+### Random Forest
+The random forest model was trained as below:
+```{r RF training, cache=T}
+controlRF <- trainControl(method="cv", number=5)
+modelRF <- train(classe~., data=train, method="rf", trControl=controlRF)
+modelRF$finalModel
+```
+
+The model was then evaluated using the validation dataset:
+```{r RF validation, cache=T}
+predictRF <- predict(object=modelRF, newdata=validation)
+confmatRF <- confusionMatrix(predictRF, validation$classe)
+confmatRF
+```
+
+The estimated out-of-sample error was:
+```{r RF Out-of-sample error, cache=T}
+round(1 - as.numeric(confmatRF$overall['Accuracy']), 4)
+```
+
+The confusion matrix was visualized below:
+```{r RF confusion matrix, cache=T}
+plot(confmatRF$table, col=confmatRF$byClass, main=paste("RF Accuracy:", round(confmatRF$overall['Accuracy'], 4)))
+```
+
+### Generalized Boosted Model
+The GBM model was trained as below:
+```{r GBM training, cache=T}
+controlGBM <- trainControl(method="cv", number=5)
+modelGBM <- train(classe~., data=train, method="gbm", trControl=controlGBM, verbose=F)
+modelGBM$finalModel
+```
+
+And similarly evaluated using the validation dataset:
+```{r GBM validation, cache=T}
+predictGBM <- predict(object=modelGBM, newdata=validation)
+confmatGBM <- confusionMatrix(predictGBM, validation$classe)
+confmatGBM
+```
+
+The estimated out-of-sample error was:
+```{r GBM Out-of-sample error, cache=T}
+round(1 - as.numeric(confmatGBM$overall['Accuracy']), 4)
+```
+
+The confusion matrix was visualized below:
+```{r GBM confusion matrix, cache=T}
+plot(confmatGBM$table, col=confmatGBM$byClass, main=paste("GBM Accuracy:", round(confmatGBM$overall['Accuracy'], 4)))
+```
+
+## Test Set Prediction
+Since the Random Forest model yields higher accuracy, it was used to predict the `classe` of the test set:
+```{r Test set prediction, cache=T}
+predict(object=modelRF, newdata=test)
+```
